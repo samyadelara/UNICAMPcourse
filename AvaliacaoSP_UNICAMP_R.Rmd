@@ -1,0 +1,232 @@
+---
+title: "Curso Estatística em R - UNICAMP - Avaliação"
+author: "Samya de Lara Pinheiro"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+Esta é a avaliação da aluna Samya de Lara Pinheiro, submetida para o curso de extensão "Estatística para Geociências usando R", ministrado no 1o semestre de 2021.  
+
+```{r}
+print("Vamos lá!")
+```
+# Questão 1
+Use o conjunto de dados biogeoquímicos em (https://www.sciencebase.gov/catalog/item/5fec8c1ed34ea5387defd59d). Analise a normalidade de todos os dados numéricos, faça transformações quando necessário ou possível. Proponha um modelo usando os dados normais ou normalizados que tenha a concentração de sulfato como saída em função dos outros parâmetros.
+
+## Resolução
+*O url indicado não retorna nenhum banco de dados e deve estar `quebrado`. Assim irei utilizar o banco de dados já abordado em aula Earth Chem.* Inicialmente iremos carregar os dados e analisar a normalidade através de dois métodos:  
+  - análise dos histogramas  
+  - teste de Shapiro-Wilk  
+  
+  
+```{r}
+#### CARREGANDO DADOS
+library(xlsx)
+arq <- "/Users/samyadelara/Desktop/DataScience/Cursos avulsos/CursoR_UNICAMP/dadosEarthChem.xlsx"
+data <- read.xlsx(arq,startRow = 4, sheetName = 'Sheet1', header = FALSE)
+nomes <- read.xlsx(arq,startRow = 2, endRow = 3, sheetName <- 'Sheet1', header = FALSE)
+colnames(data) <- nomes[1,]
+data <- data[,-8]
+head(data)
+str(data)
+
+#### HISTOGRAMA DAS VARIÁVEIS
+library(ggplot2)
+cores <- rainbow(13)
+for(i in 5:17) {
+  g <- ggplot(data=data, aes(data[,i])) +
+  geom_histogram(color = "#e9ecef", fill = cores[i-4], alpha = 0.6, position = "identity", bins = 10) +
+  labs(title = paste0("Histograma de ", colnames(data)[i]),x=colnames(data)[i], y="Frequência") +
+  theme(plot.title = element_text(hjust = 0.5))
+  print(g)
+}
+
+####  TESTE DE SHAPIRO DAS VARIÁVEIS
+d <- data[,5:17]
+pval <- data.frame(matrix(NA,dim(d)[2],1))
+rownames(pval) <- colnames(d)
+colnames(pval) <- c("pvalue")
+for (i in 1:13) {
+  pval[i,1] <- shapiro.test(d[,i])$p.value
+}
+pval
+
+```
+  
+Apenas a variável `Al2O3` pode ser considerada normal, à medida que seu histograma se aproxima de uma Gaussiana e no teste de Shapiro a hipótese nula não foi rejeitada, i.e. distribuição da variável é comparável à distr. normal.  
+Para as outras variáveis as distribuições parecem mais assimétricas (`FeO` e `MnO` possuem um histograma bem sugestivo de distribuição normal, contudo pelo teste de Shapiro, a normalidade não foi confirmada). Para trabalhar com estas variáveis em modelos de regressão iremos aplicar transformações.  
+  
+Utilizando a função de `Box-Cox`, iremos descobrir a potência $\lambda$ que deve ser aplicada como potência na variável para normalizá-la.  
+  
+```{r}
+library(car)
+
+####  CÁLCULO DE LAMBDAS
+lamb <- data.frame(matrix(NA,12,1))
+rownames(lamb) <- colnames(d)[-6]
+colnames(lamb) <- c("lambdaBC")
+var2norm <- c(1:5,7:13)
+j <- 14
+for (i in var2norm) {
+  nom <- colnames(d)[i]
+  colnames(d)[i] <- "Y"
+  res <- boxCox(d$Y ~ 1, data = d[,i],  lambda = seq(-4,4,length=50))
+  im <- which.max(res$y)
+  lam <- res$x[im]
+  tmp <- bcPower(d[,i], lam)
+  lamb[j-13,1] <- lam
+  d[,j] <- tmp
+  colnames(d)[i] <- nom
+  colnames(d)[j] <- paste0("t_",nom)
+  j <- j+1
+  
+}
+lamb
+head(d)
+
+```
+  
+```{r}
+pval <- data.frame(matrix(NA,dim(d)[2],1))
+rownames(pval) <- colnames(d)
+colnames(pval) <- c("pvalue")
+for (i in 1:dim(d)[2]) {
+  pval[i,1] <- shapiro.test(d[,i])$p.value
+}
+pval
+```
+  
+Finalmente podemos fazer um modelo de regressão relacionando a profundidade com os outros parâmetros. Testaremos as correlações para uma avaliação preliminar das variáveis e em seguida, utilizar a função `lm` para definir o modelo e analisar coeficientes e significância.  
+  
+```{r}
+#### CORRELAÇÕES
+library(PerformanceAnalytics)
+chart.Correlation(d[,c(6,14:25)], histogram = T)
+```
+  
+Correlações interessantes com `CaO` e `Na2O`.  
+  
+```{r}
+#### REGRESSÃO LINEAR
+mod1 <- lm(data=d, Depth~t_CaO) 
+summary(mod1)
+
+mod2 <- lm(data=d, Depth~t_Na2O) 
+summary(mod2)
+
+mod3 <- lm(data=d, Depth~t_CaO+t_Na2O) 
+summary(mod3)
+
+#explorando as outra variáveis que tinha correlação
+mod4 <- lm(data=d, t_Depth~Al2O3+t_H2O+t_FeOT+t_Na2O)
+summary(mod4)
+
+#finalmente ficaremos com um modelo mais simples
+modelo = mod2
+summary(modelo)
+plot(modelo)
+```
+
+Após alguns testes, estabelecemos um modelo linear para a profundidade a partir dos dados de `Na2O`.
+  
+Importante reforçar que a construção deste modelo visou estabelecer as relações entre as variáveis e compreender a explicação da variabilidade de Sulfato em função dos outros parâmetros. Caso o objetivo do modelo fosse predição de valores, seria recomendada a separação da amostra em extrato de treino/teste para uma avaliação detalhada do erro e acurácia das possibilidades de modelos.
+
+# Questão 2
+Pesquise em bases de dados públicas informações para construir um classificador de áreas em risco de contaminação ou contaminadas em bacias hidrográficas. Seja criativo e procure por informações que tenham relevância, proximidade de grandes centros, fluxo, vazão, pluviometria, entre outros. Sugere-se usar dados de um mesmo país ou região. Tente aplicar alguma técnica de aprendizado de máquina.  
+  
+  
+## Resolução
+Não consegui estabelecer uma base de dados a tempo de enviar a avaliação.
+  
+# Questão 3
+Uma pequena digressão fora das geociências. Use os dados de propriedades de vinhos de diversas marcas que podem ser encontrados em (https://archive.ics.uci.edu/ml/datasets/wine). Tente estabelecer se é possível agrupar esses vinhos de alguma forma com essas propriedades.  
+  
+  
+## Resolução
+Inicialmente iremos baixar os dados e analisar a normalidade através da análise dos histogramas e correlações
+  
+```{r}
+#### CARREGANDO DADOS
+arq <- "/Users/samyadelara/Desktop/DataScience/Cursos avulsos/CursoR_UNICAMP/wine.data"
+data <- read.csv(arq, header=FALSE)
+colnames(data) <- c('Market','Alcohol','Malic acid','Ash','Alcalinity','Magnesium','Phenols','Flavanoids','Nonflavanoids','Proanthocyanins','Color','Hue','OD280/OD315','Proline')
+head(data)
+str(data)
+
+#### HISTOGRAMA DAS VARIÁVEIS
+library(ggplot2)
+cores <- rainbow(13)
+for(i in 2:14) {
+  g <- ggplot(data=data, aes(data[,i])) +
+  geom_histogram(color = "#e9ecef", fill = cores[i-1], alpha = 0.6, position = "identity", bins = 10) +
+  labs(title = paste0("Histograma de ", colnames(data)[i]),x=colnames(data)[i], y="Frequência") +
+  theme(plot.title = element_text(hjust = 0.5))
+  print(g)
+}
+```
+  
+```{r}
+#### CORRELAÇÕES
+library(PerformanceAnalytics)
+chart.Correlation(data, histogram = T)
+```
+  
+  
+Para agrupar as variáveis antes de agrupar os vinhos, será utilizada uma técnica de análise de fatores através de **PCA**. Após o agrupamento e identificação dos fatores será aplicada um agrupamentos dos registros com base no algoritmo de k-means.  
+
+```{r}
+pca_r = prcomp(data)
+pca_r
+```
+  
+```{r}
+library(factoextra)
+
+fviz_eig(pca_r)
+fviz_pca_ind(pca_r, col.ind = 'cos2')
+fviz_pca_var(pca_r, col.var = 'contrib')
+```
+`Magnesium` é a variável com maior carga no fator 2, todas as outras variáveis apresentam cargas no fator 1. Iremos então separar em 4 grupos (pensando na dispersão dos pontos no gráfico de scatter da PCA).  
+
+```{r}
+kpca = data.frame(pc1 = pca_r$x[,1], pc2 = pca_r$x[,2])
+kgroups = kmeans(kpca,4)
+kgroups
+
+kpca$cluster = kgroups$cluster
+head(kpca)
+ggplot(data = kpca, aes(x=pc1, y=pc2)) +
+  geom_point(color=kpca$cluster)
+# e ainda traçar as elipses
+fviz_pca_ind(pca_r,
+             geom.ind = "point", # show points only (nbut not "text")
+             col.ind = as.factor(kpca$cluster), # color by groups
+             palette = c("#00AFBB", "#FC4E07", "darkmagenta", "darkorange"),
+             addEllipses = TRUE, # Concentration ellipses
+             legend.title = "Groups"
+             )
+```
+Finalmente avaliamos valores médios das variáveias em cada grupo.
+
+```{r}
+data$cluster <- kpca$cluster
+aggregate(data,by=list(data$cluster), mean)
+```
+
+# Questão 4
+Descreva em texto como você lida com um conjunto de dados que precisa analisar. Quais as principais etapas?  
+  
+## Resolução
+Em uma análise de dados, inicialmente importo os dados no RStudio (ou Python-Colab/Jupyter). Em geral, essa já é uma atividade que demanda bastante tempo já que os dados podem possuir uma estrutura bem diferente, formato, cabeçalhos, etc. 
+Após importar passo para uma análise exploratória:  
+  - caracterização dos tipos de variáveis  
+  
+  - análise das estatísticas descritivas gerais (médias, desvio padrão, mediana)  
+  
+  - quantidade de NA`s  
+  
+  - caracterização de distribuições com análise de histogramas e boxplots
+  
+De acordo com essa análise exploratória, reflito sobre que tipos de análises posso aplicar aos dados, técnicas de agrupamento, regressão, tabelas de contingência, anova, etc conforme o fenômeno que quero estudar e hipóteses que quero confirmar. Nesta reflexão também avalio a necessidade de tratamento de `missing values` (exclusão, ou preenchimento) ou de normalizar as variáveis (caso para alguma das análises esse seja um dos pressupostos).  
+De acordo com essa escolha de análise o fluxo de tratamento dos dados pode incluir seleção de amostra treino e teste, ou criação de gráficos para evidenciar achados como agrupamentos ou relações entre variáveis.
